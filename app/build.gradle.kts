@@ -1,0 +1,166 @@
+import java.util.Properties
+
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.plugin.compose")
+}
+
+val releaseKeystorePath = providers.environmentVariable("ANDROID_KEYSTORE_PATH").orNull
+val releaseKeystorePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("ANDROID_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("ANDROID_KEY_PASSWORD").orNull
+val releaseSigningConfigured = listOf(
+    releaseKeystorePath,
+    releaseKeystorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword
+).all { !it.isNullOrBlank() }
+
+// 敏感配置：签名盐值、API 地址等从 secrets.properties 读取，不提交到版本控制。
+val secretsFile = rootProject.file("secrets.properties")
+val secretsProps = Properties()
+if (secretsFile.exists()) {
+    secretsProps.load(secretsFile.inputStream())
+}
+val apiGateway = secretsProps.getProperty("API_GATEWAY", "")
+val signSalt = secretsProps.getProperty("SIGN_SALT", "")
+val apiCid = secretsProps.getProperty("API_CID", "")
+
+// 两条链路的协议常量。服务端会用 VersionCode 请求头做「最低版本」校验：
+// 官方 App 每次强制升级，这两个值都会跟着变，旧值会被拒绝为「请升级最新版APP」。
+//
+// 注意 VersionCode 头要的是**整数 versionCode**（官方 3.1.9 包 = 31009），
+// 而 UA 后缀才是 versionName（3.1.9）；APP 链路运行时会自动跟随本机已安装的官方 App。
+val versionCodeMain = secretsProps.getProperty("VERSION_CODE_MAIN", "2.0.178")
+val versionCodeApp = secretsProps.getProperty("VERSION_CODE_APP", "31009")
+val appVersionName = secretsProps.getProperty("APP_VERSION_NAME", "3.1.9")
+val userAgentMain = secretsProps.getProperty("USER_AGENT_MAIN", "WaterWidget/5.4.4 (Android)")
+val userAgentAppPrefix = secretsProps.getProperty("USER_AGENT_APP_PREFIX", "Android_ilife798_")
+
+android {
+    namespace = "com.water.widget"
+    compileSdk = 37
+
+    defaultConfig {
+        applicationId = "com.water.widget"
+        // 固定正式包名，所有本地与 CI 构建都保持一致；不要按 buildType 添加后缀。
+        minSdk = 33
+        targetSdk = 35
+        // 23 > 已发布 5.4.4 的 22，保证可以直接覆盖安装、保留本机账户数据。
+        versionCode = 23
+        versionName = "5.4.5"
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // 敏感配置注入 BuildConfig，源码不包含实际值。
+        buildConfigField("String", "API_GATEWAY", "\"${apiGateway}\"")
+        buildConfigField("String", "SIGN_SALT", "\"${signSalt}\"")
+        buildConfigField("String", "API_CID", "\"${apiCid}\"")
+        // 协议常量：服务端按 VersionCode 做最低版本校验，详见 README「启动失败：请升级最新版APP」。
+        buildConfigField("String", "VERSION_CODE_MAIN", "\"${versionCodeMain}\"")
+        buildConfigField("String", "VERSION_CODE_APP", "\"${versionCodeApp}\"")
+        buildConfigField("String", "APP_VERSION_NAME", "\"${appVersionName}\"")
+        buildConfigField("String", "USER_AGENT_MAIN", "\"${userAgentMain}\"")
+        buildConfigField("String", "USER_AGENT_APP_PREFIX", "\"${userAgentAppPrefix}\"")
+
+        // 面向现代安卓真机分发；移除 32 位 ARM 与 x86 系列原生库以缩减 bundled ML Kit 扫码库体积。
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
+    }
+
+    sourceSets {
+        getByName("main") {
+            manifest.srcFile("../src/main/AndroidManifest.xml")
+            java.directories += "../src/main/java"
+            kotlin.directories += "../src/main/kotlin"
+            res.directories += "../src/main/res"
+        }
+        getByName("test") {
+            kotlin.directories += "../src/test/kotlin"
+        }
+    }
+
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+
+    packaging {
+        dex {
+            useLegacyPackaging = false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+        isCoreLibraryDesugaringEnabled = true
+    }
+
+    signingConfigs {
+        if (releaseSigningConfigured) {
+            create("release") {
+                storeFile = file(requireNotNull(releaseKeystorePath))
+                storePassword = requireNotNull(releaseKeystorePassword)
+                keyAlias = requireNotNull(releaseKeyAlias)
+                keyPassword = requireNotNull(releaseKeyPassword)
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            if (releaseSigningConfigured) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+    }
+}
+
+kotlin {
+    jvmToolchain(21)
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
+dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+
+    val composeBom = platform("androidx.compose:compose-bom:2026.05.01")
+    implementation(composeBom)
+    androidTestImplementation(composeBom)
+
+    implementation("androidx.activity:activity-compose:1.9.3")
+    implementation("androidx.core:core-ktx:1.17.0")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
+    implementation("androidx.compose.animation:animation")
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
+    implementation("top.yukonga.miuix.kmp:miuix-ui-android:0.9.3")
+    implementation("top.yukonga.miuix.kmp:miuix-blur-android:0.9.3")
+    implementation("com.alipay.sdk:alipaysdk-android:15.8.16")
+    // 与 ImageToolbox 相同的 CameraX + ML Kit 扫码路线；bundled 模型无需依赖 Google Play 服务。
+    implementation("com.github.T8RIN.QuickieExtended:quickie-bundled:1.18.1")
+
+    debugImplementation("androidx.compose.ui:ui-tooling")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20250517")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+}
