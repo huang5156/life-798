@@ -26,6 +26,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Windows 上提交的文件默认没有可执行位，Linux runner 直接跑 ./gradlew 会报 126。
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
@@ -89,6 +93,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # Windows 上提交的文件默认没有可执行位，Linux runner 直接跑 ./gradlew 会报 126。
+      - name: Make gradlew executable
+        run: chmod +x gradlew
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
