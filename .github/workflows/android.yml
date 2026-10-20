@@ -19,8 +19,7 @@ jobs:
   validate:
     name: Validate Android build
     if: github.event_name != 'push'
-    # 固定到 24.04：ubuntu-latest 自 2026-10-19 起迁移到 Ubuntu 26，
-    # android-actions/setup-android@v3 在新镜像上会失败（Set up Android SDK 直接报错）。
+    # 固定到 24.04：ubuntu-latest 自 2026-10-19 起迁移到 Ubuntu 26，稳妥起见不用浮动标签。
     runs-on: ubuntu-24.04
 
     steps:
@@ -34,7 +33,7 @@ jobs:
           java-version: '21'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Install required Android SDK packages
         run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
@@ -98,7 +97,7 @@ jobs:
           java-version: '21'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Install required Android SDK packages
         run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
