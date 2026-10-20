@@ -693,12 +693,15 @@ public class IlifeApi {
             default:
                 break;
         }
-        String text = msg == null || msg.isEmpty() ? ("code=" + code) : msg;
-        if (msg != null && (msg.contains("升级") || msg.contains("更新") || msg.contains("版本"))) {
-            return text + "（当前上报版本 " + profile.versionCode
+        // 服务端没给 msg 时只需要 code，不要再补一次括号。
+        if (msg == null || msg.isEmpty()) {
+            return "code=" + code;
+        }
+        if (msg.contains("升级") || msg.contains("更新") || msg.contains("版本")) {
+            return msg + "（当前上报版本 " + profile.versionCode
                     + "；请把官方「慧生活798」App 更新到最新版后重试）";
         }
-        return text + "（code=" + code + "）";
+        return msg + "（code=" + code + "）";
     }
 
     // ====== 通用请求 ======
