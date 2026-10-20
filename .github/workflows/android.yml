@@ -19,7 +19,9 @@ jobs:
   validate:
     name: Validate Android build
     if: github.event_name != 'push'
-    runs-on: ubuntu-latest
+    # 固定到 24.04：ubuntu-latest 自 2026-10-19 起迁移到 Ubuntu 26，
+    # android-actions/setup-android@v3 在新镜像上会失败（Set up Android SDK 直接报错）。
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
@@ -81,7 +83,7 @@ jobs:
   release:
     name: Build and publish Android release
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
 
