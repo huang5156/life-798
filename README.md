@@ -75,24 +75,28 @@ app/build/outputs/apk/release/app-release.apk
    同一个 `User-Agent`，因此无论服务端是否强制升级，都会被视为「版本过旧」。
    现在按官方客户端实现：MAIN（`1,5`）与 APP（`1,1`）分别带自己的 `User-Agent`、`ApplicationType`、`VersionCode`，
    见 `IlifeApi.requestHeaders()` 与 `IlifeApiProtocolTest`。
-2. **区分 versionCode 与 versionName。** 这两个值不是同一个东西：
+2. **按官方 OkHelper 拦截器的规范补全协议。** 反编译官方 `com.cloudora.android` v3.1.9 的
+   `com.ilife.lib.coremodel.http.base.OkHelper` 与 `DevControlHelper` 确认，官方客户端会强制：
 
-   | 用途 | 取值 | 官方 3.1.9 包的实际值 |
+   | 项 | 官方取值 | 说明 |
    |---|---|---|
-   | 请求头 `VersionCode` | 整数 `versionCode` | `31009` |
-   | `User-Agent` 后缀 | `versionName` | `3.1.9` |
+   | 请求头 `VersionCode` | `3.1.9` | 用的是**版本名**，不是整数 versionCode（31009） |
+   | `User-Agent` | `Android_ilife798_3.1.9` | 固定前缀 + 版本名 |
+   | `/dev/start` 参数 | `…&rcp=false&cnt=1` | 多了 `cnt` 通道计数 |
 
-   之前把两者当成一个值（都用 `3.1.9`）上报，服务端按 `versionCode` 比较时就会判为过旧。
-   现在运行时读取本机官方「慧生活798」（`com.cloudora.android`）的
-   `getLongVersionCode()` 与 `versionName` 分别上报，官方 App 再强制升级也无需重新打包。
+   缺任一项，服务端都会回落到「请升级最新版APP」的旧客户端分支。
+   现在客户端按此实现：`IlifeApi.appProfile()` 统一用版本名填 `VersionCode` 与 UA 后缀，
+   `IlifeApi.deviceStartUrl()` 补 `cnt=1`，并由 `IlifeApiProtocolTest` 锁定。
+
+   版本名运行时读取本机官方「慧生活798」（`com.cloudora.android`）的 `versionName`，
+   官方再发版也无需重新打包；未安装官方 App 时用 `APP_VERSION_NAME`（默认 `3.1.9`）。
 
 仍然失败时按顺序排查：
 
 - 手机上的官方「慧生活798」是否已更新到应用内提示的最新版（应用商店可能滞后）——
-  本应用会自动跟随它的 `versionCode` / `versionName`；
+  本应用会自动跟随它的 `versionName`；
 - 没装官方 App（例如只用小程序）时，在 `secrets.properties` 里显式指定
-  `VERSION_CODE_APP=31009` 与 `APP_VERSION_NAME=3.1.9` 后重新构建；
-  官方发新包后这两个值换成本机官方 App 的「版本号」与「版本名称」即可（应用信息页可见）；
+  `APP_VERSION_NAME=3.1.9` 后重新构建；官方发新包后改成新版版本名即可（应用信息页可见）；
 - 报错末尾的 `code=` 是服务端返回码，可据此判断是版本（`请升级最新版APP`）、
   签约（`-88`/`-87`）、欠费（`-52`）还是设备登录（`-21`）。
 

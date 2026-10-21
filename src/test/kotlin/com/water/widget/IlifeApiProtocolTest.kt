@@ -2,19 +2,18 @@ package com.water.widget
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 锁定两条链路的请求头协议。
+ * 锁定两条链路的请求协议。
  *
- * 服务端要求每条请求都带 ApplicationType / VersionCode，并按 VersionCode 做最低版本校验：
- * - MAIN（积分链路）用官方小程序的 2.0.178；
- * - APP（设备控制）用官方 App 的**整数 versionCode**（3.1.9 包 = 31009），
- *   User-Agent 里才是 versionName（3.1.9）。
+ * 官方客户端（`com.ilife.lib.coremodel.http.base.OkHelper`）会强制注入：
+ * - MAIN（积分链路）：VersionCode = 2.0.178，UA = WaterWidget/5.4.4 (Android)
+ * - APP（设备控制）：VersionCode = 版本名（3.1.9），UA = Android_ilife798_3.1.9
  *
- * 公开仓库原来的实现两项都不发、UA 也共用，表现为接水时提示「请升级最新版APP」。
+ * 出水接口 `/dev/start` 还要带 `cnt=1`（DevControlHelper 的通道计数）。
+ * 缺任一项，服务端都会回到「请升级最新版APP」的旧客户端分支。
  */
 class IlifeApiProtocolTest {
 
@@ -31,32 +30,41 @@ class IlifeApiProtocolTest {
     }
 
     @Test
-    fun `APP 链路用整数 versionCode，UA 用 versionName`() {
+    fun `APP 链路 VersionCode 与 UA 都用官方版本名`() {
         val version = IlifeApi.officialVersion()
-        val profile = IlifeApi.appProfile()
-        val headers = IlifeApi.requestHeaders(profile, "token-app")
+        val headers = IlifeApi.requestHeaders(IlifeApi.appProfile(), "token-app")
 
         assertEquals("1,1", headers["ApplicationType"])
-        assertEquals(version.code, headers["VersionCode"])
-        assertEquals(BuildConfig.USER_AGENT_APP_PREFIX + version.name, headers["User-Agent"])
+        assertEquals(version, headers["VersionCode"])
+        assertEquals("Android_ilife798_$version", headers["User-Agent"])
         assertEquals("token-app", headers["Authorization"])
     }
 
     @Test
-    fun `VersionCode 头必须是纯数字，不能是点分的版本名`() {
-        val code = IlifeApi.officialVersion().code
-        assertTrue("VersionCode 应为整数 versionCode，实际为 $code", code.all { it.isDigit() })
-        assertNotEquals(BuildConfig.APP_VERSION_NAME, code)
+    fun `VersionCode 是版本名而不是整数 versionCode`() {
+        val version = IlifeApi.officialVersion()
+
+        assertTrue("版本名形如 3.1.9，实际为 $version", version.matches(Regex("""\d+\.\d+\.\d+""")))
+        assertEquals(IlifeApi.OFFICIAL_VERSION, version)
+        assertFalse("不应再上报 31009 这类整数 versionCode", version.all { it.isDigit() })
     }
 
     @Test
     fun `读不到官方 App 时退回构建期默认值`() {
         // 单元测试里没有 Application Context，等同于「没装官方 App」。
-        val version = IlifeApi.officialVersion()
-        assertEquals(BuildConfig.VERSION_CODE_APP, version.code)
-        assertEquals(BuildConfig.APP_VERSION_NAME, version.name)
-        assertFalse(version.code.isEmpty())
-        assertFalse(version.name.isEmpty())
+        assertEquals(BuildConfig.APP_VERSION_NAME, IlifeApi.officialVersion())
+        assertEquals(IlifeApi.OFFICIAL_VERSION, BuildConfig.APP_VERSION_NAME)
+    }
+
+    @Test
+    fun `出水接口带 cnt 通道计数`() {
+        val url = IlifeApi.deviceStartUrl("ABC123")
+
+        assertTrue(url, url.contains("/dev/start?did=ABC123"))
+        assertTrue(url, url.contains("&upgrade=true"))
+        assertTrue(url, url.contains("&ptype=91"))
+        assertTrue(url, url.contains("&rcp=false"))
+        assertTrue("缺少 cnt=1 会被服务端当作旧客户端", url.contains("&cnt=1"))
     }
 
     @Test
@@ -73,7 +81,7 @@ class IlifeApiProtocolTest {
 
         assertTrue(message.contains("请升级最新版APP"))
         assertTrue("应提示更新官方 App", message.contains("官方"))
-        assertTrue("应带上当前上报的版本号", message.contains(profile.versionCode))
+        assertTrue("应带上当前上报的版本", message.contains(profile.versionCode))
     }
 
     @Test

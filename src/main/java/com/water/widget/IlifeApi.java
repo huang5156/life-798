@@ -45,17 +45,25 @@ public class IlifeApi {
     /**
      * 官方「慧生活798」App 的包名。
      *
-     * 服务端的 VersionCode 头要的是**整数 versionCode**（官方 3.1.9 包为 {@code 31009}），
-     * 而 User-Agent 里的版本是 versionName（{@code 3.1.9}）。两者不是同一个东西，
-     * 之前把它们当成一个值（都用 3.1.9）上报，服务端按 versionCode 比较时就会判为过旧。
+     * 官方客户端的网络拦截器（com.ilife.lib.coremodel.http.base.OkHelper）会给每个请求强制注入：
+     * <pre>
+     *   VersionCode: 3.1.9                 ← 版本名，不是整数 versionCode(31009)
+     *   User-Agent:  Android_ilife798_3.1.9
+     * </pre>
+     * 出水接口 /dev/start 另外还要求 {@code cnt=1}（通道计数）。
+     * 这里统一按 versionName 上报；本机装了官方 App 时跟随它的 versionName，官方升级后无需改代码。
      */
     private static final String OFFICIAL_PACKAGE = "com.cloudora.android";
+
+    /** 兜底版本：官方 v3.1.9（未安装官方 App 时使用）。 */
+    static final String OFFICIAL_VERSION = "3.1.9";
+
     /** 读到的官方版本缓存一分钟；读不到时只缓存 10 秒，便于刚装完/刚升级后尽快生效。 */
     private static final long OFFICIAL_VERSION_TTL_MS = 60_000L;
     private static final long OFFICIAL_VERSION_MISS_TTL_MS = 10_000L;
 
     private static volatile Context appContext;
-    private static volatile OfficialVersion cachedOfficialVersion;
+    private static volatile String cachedOfficialVersion;
     private static volatile boolean cachedOfficialVersionFromDevice;
     private static volatile long cachedOfficialVersionAt;
 
@@ -87,26 +95,14 @@ public class IlifeApi {
         }
     }
 
-    /** 官方 App 的两个版本标识：code 对应 VersionCode 头，name 对应 UA 后缀。 */
-    static final class OfficialVersion {
-        final String code;
-        final String name;
-
-        OfficialVersion(String code, String name) {
-            this.code = code;
-            this.name = name;
-        }
-    }
-
     /** MAIN 链路：积分 / 支付宝小程序。 */
     static final ApiProfile PROFILE_MAIN = new ApiProfile(
             "1,5", BuildConfig.VERSION_CODE_MAIN, BuildConfig.USER_AGENT_MAIN);
 
-    /** APP 链路：官方 App / 设备控制 / 钱包。版本标识跟随本机官方 App。 */
+    /** APP 链路：官方 App / 设备控制 / 钱包。VersionCode 与 UA 都用官方版本名。 */
     static ApiProfile appProfile() {
-        OfficialVersion version = officialVersion();
-        return new ApiProfile("1,1", version.code,
-                BuildConfig.USER_AGENT_APP_PREFIX + version.name);
+        String version = officialVersion();
+        return new ApiProfile("1,1", version, BuildConfig.USER_AGENT_APP_PREFIX + version);
     }
 
     /** 由 Application 调用一次，之后无需到处传 Context。 */
@@ -117,50 +113,43 @@ public class IlifeApi {
     }
 
     /**
-     * 本机官方 App 的版本标识：优先读已安装的官方 App，
-     * 读不到（未安装 / 包可见性受限）时退回构建时注入的默认值。
+     * 官方 App 的版本名（例如 3.1.9）：{@code VersionCode} 头与 UA 后缀都用它。
+     * 优先读本机已安装的官方 App，读不到时退回构建期默认值 / {@link #OFFICIAL_VERSION}。
      */
-    static OfficialVersion officialVersion() {
+    static String officialVersion() {
         long now = System.currentTimeMillis();
-        OfficialVersion cached = cachedOfficialVersion;
+        String cached = cachedOfficialVersion;
         long at = cachedOfficialVersionAt;
         if (cached != null && at != 0) {
             long ttl = cachedOfficialVersionFromDevice
                     ? OFFICIAL_VERSION_TTL_MS : OFFICIAL_VERSION_MISS_TTL_MS;
             if (now - at < ttl) return cached;
         }
-        OfficialVersion detected = detectOfficialVersion();
-        if (detected != null) {
-            cachedOfficialVersion = detected;
-            cachedOfficialVersionFromDevice = true;
-        } else {
+        String detected = detectOfficialVersion();
+        if (detected == null || detected.isEmpty()) {
             detected = defaultOfficialVersion();
-            cachedOfficialVersion = detected;
             cachedOfficialVersionFromDevice = false;
+        } else {
+            cachedOfficialVersionFromDevice = true;
         }
+        cachedOfficialVersion = detected;
         cachedOfficialVersionAt = now;
         return detected;
     }
 
-    private static OfficialVersion defaultOfficialVersion() {
-        return new OfficialVersion(BuildConfig.VERSION_CODE_APP, BuildConfig.APP_VERSION_NAME);
+    private static String defaultOfficialVersion() {
+        String configured = BuildConfig.APP_VERSION_NAME;
+        return configured == null || configured.isEmpty() ? OFFICIAL_VERSION : configured;
     }
 
-    private static OfficialVersion detectOfficialVersion() {
+    private static String detectOfficialVersion() {
         Context ctx = appContext;
         if (ctx == null) return null;
         try {
             PackageInfo info = ctx.getPackageManager().getPackageInfo(OFFICIAL_PACKAGE, 0);
-            if (info == null) return null;
-            String name = info.versionName == null ? "" : info.versionName.trim();
-            long code = info.getLongVersionCode();
-            if (name.isEmpty() && code <= 0) return null;
-            if (code <= 0) {
-                return new OfficialVersion(BuildConfig.VERSION_CODE_APP,
-                        name.isEmpty() ? BuildConfig.APP_VERSION_NAME : name);
-            }
-            return new OfficialVersion(String.valueOf(code),
-                    name.isEmpty() ? BuildConfig.APP_VERSION_NAME : name);
+            if (info == null || info.versionName == null) return null;
+            String name = info.versionName.trim();
+            return name.isEmpty() ? null : name;
         } catch (Exception ignored) {
             // 没装官方 App（或系统限制包可见性）时退回默认值，不影响其它功能。
             return null;
@@ -219,6 +208,9 @@ public class IlifeApi {
                 c = (HttpURLConnection) new URL(u).openConnection();
                 c.setRequestMethod("GET");
                 c.setRequestProperty("User-Agent", PROFILE_MAIN.userAgent);
+                c.setRequestProperty("ApplicationType", PROFILE_MAIN.appType);
+                c.setRequestProperty("VersionCode", PROFILE_MAIN.versionCode);
+                c.setRequestProperty("Accept-Language", "zh-Hans-CN;q=1");
                 c.setConnectTimeout(15000);
                 c.setReadTimeout(15000);
                 InputStream is = c.getInputStream();
@@ -544,6 +536,17 @@ public class IlifeApi {
         }).start();
     }
 
+    /**
+     * 出水接口地址。
+     *
+     * 官方 DevControlHelper 的 /dev/start 额外带 {@code cnt=1}（通道计数），
+     * 缺这个参数服务端会走旧客户端分支。抽成静态方法便于单元测试锁定。
+     */
+    static String deviceStartUrl(String did) {
+        return GATEWAY + "/dev/start?did=" + enc(did)
+                + "&upgrade=true&ptype=91&rcp=false&cnt=1";
+    }
+
     public static void devStart(Context ctx, final String did, final TextCallback cb) {
         new Thread(() -> {
             Account acc = AccountStore.getCurrent(ctx);
@@ -557,8 +560,7 @@ public class IlifeApi {
                 cb.onResult(null, "需要设备登录信息，请先在账户中添加");
                 return;
             }
-            String url = GATEWAY + "/dev/start?did=" + enc(did)
-                    + "&upgrade=true&ptype=91&rcp=false";
+            String url = deviceStartUrl(did);
             try {
                 ApiProfile profile = appProfile();
                 String body = httpRawApp("GET", url, null, acc.appToken, profile);
@@ -591,8 +593,7 @@ public class IlifeApi {
                 cb.onResult(null, "需要设备登录信息，请先在账户中添加");
                 return;
             }
-            String url = GATEWAY + "/dev/start?did=" + enc(did)
-                    + "&upgrade=true&ptype=91&rcp=false";
+            String url = deviceStartUrl(did);
             try {
                 ApiProfile profile = appProfile();
                 String body = httpRawApp("GET", url, null, appToken, profile);

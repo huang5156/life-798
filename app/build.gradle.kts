@@ -26,13 +26,12 @@ val apiGateway = secretsProps.getProperty("API_GATEWAY", "")
 val signSalt = secretsProps.getProperty("SIGN_SALT", "")
 val apiCid = secretsProps.getProperty("API_CID", "")
 
-// 两条链路的协议常量。服务端会用 VersionCode 请求头做「最低版本」校验：
-// 官方 App 每次强制升级，这两个值都会跟着变，旧值会被拒绝为「请升级最新版APP」。
+// 两条链路的协议常量。
 //
-// 注意 VersionCode 头要的是**整数 versionCode**（官方 3.1.9 包 = 31009），
-// 而 UA 后缀才是 versionName（3.1.9）；APP 链路运行时会自动跟随本机已安装的官方 App。
+// 官方客户端（OkHelper 拦截器）对 APP 链路强制注入 VersionCode = 版本名（3.1.9）
+// 与 UA = Android_ilife798_3.1.9；官方发版后这两个值一起变，旧值会被拒为「请升级最新版APP」。
+// APP 链路运行时会自动跟随本机已安装官方 App 的 versionName，一般无需改这里。
 val versionCodeMain = secretsProps.getProperty("VERSION_CODE_MAIN", "2.0.178")
-val versionCodeApp = secretsProps.getProperty("VERSION_CODE_APP", "31009")
 val appVersionName = secretsProps.getProperty("APP_VERSION_NAME", "3.1.9")
 val userAgentMain = secretsProps.getProperty("USER_AGENT_MAIN", "WaterWidget/5.4.4 (Android)")
 val userAgentAppPrefix = secretsProps.getProperty("USER_AGENT_APP_PREFIX", "Android_ilife798_")
@@ -56,9 +55,8 @@ android {
         buildConfigField("String", "API_GATEWAY", "\"${apiGateway}\"")
         buildConfigField("String", "SIGN_SALT", "\"${signSalt}\"")
         buildConfigField("String", "API_CID", "\"${apiCid}\"")
-        // 协议常量：服务端按 VersionCode 做最低版本校验，详见 README「启动失败：请升级最新版APP」。
+        // 协议常量：官方 OkHelper 会强制注入 VersionCode / UA，详见 README「请升级最新版APP」。
         buildConfigField("String", "VERSION_CODE_MAIN", "\"${versionCodeMain}\"")
-        buildConfigField("String", "VERSION_CODE_APP", "\"${versionCodeApp}\"")
         buildConfigField("String", "APP_VERSION_NAME", "\"${appVersionName}\"")
         buildConfigField("String", "USER_AGENT_MAIN", "\"${userAgentMain}\"")
         buildConfigField("String", "USER_AGENT_APP_PREFIX", "\"${userAgentAppPrefix}\"")
